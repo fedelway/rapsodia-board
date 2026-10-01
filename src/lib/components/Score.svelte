@@ -16,6 +16,34 @@
 
 <section class="score">
   <div>
+    <h2>Melodía</h2>
+    {#if game.melody.length === 0 && !pendingMelody}
+      <p class="empty">Todavía no hay notas de melodía.</p>
+    {:else}
+      <ol>
+        {#each game.melody as note, i}
+          <li>
+            <span class="idx">{i + 1}.</span>
+            {note.label}{scientificOctave(note.midi)}
+            <span class="fig" title={MELODY_DURATION_LABELS[note.durationKey]}>
+              <NoteFigure kind={note.durationKey} size={18} />
+            </span>
+          </li>
+        {/each}
+        {#if pendingMelody}
+          <li class="preview">
+            <span class="idx">+</span>
+            {pendingMelody.label}{scientificOctave(pendingMelody.midi)}
+            <span class="fig" title={MELODY_DURATION_LABELS[pendingMelody.durationKey]}>
+              <NoteFigure kind={pendingMelody.durationKey} size={18} />
+            </span>
+            <em>prueba</em>
+          </li>
+        {/if}
+      </ol>
+    {/if}
+  </div>
+  <div>
     <h2>Armonía</h2>
     {#if game.closedChords.length === 0 && game.currentVoicing.length === 0 && !pendingHarmony}
       <p class="empty">Todavía no hay acordes.</p>
@@ -42,34 +70,6 @@
               <span class="preview"> + {pendingHarmony.label}</span>
             {/if}
             <em>en construcción</em>
-          </li>
-        {/if}
-      </ol>
-    {/if}
-  </div>
-  <div>
-    <h2>Melodía</h2>
-    {#if game.melody.length === 0 && !pendingMelody}
-      <p class="empty">Todavía no hay notas de melodía.</p>
-    {:else}
-      <ol>
-        {#each game.melody as note, i}
-          <li>
-            <span class="idx">{i + 1}.</span>
-            {note.label}{scientificOctave(note.midi)}
-            <span class="fig" title={MELODY_DURATION_LABELS[note.durationKey]}>
-              <NoteFigure kind={note.durationKey} size={18} />
-            </span>
-          </li>
-        {/each}
-        {#if pendingMelody}
-          <li class="preview">
-            <span class="idx">+</span>
-            {pendingMelody.label}{scientificOctave(pendingMelody.midi)}
-            <span class="fig" title={MELODY_DURATION_LABELS[pendingMelody.durationKey]}>
-              <NoteFigure kind={pendingMelody.durationKey} size={18} />
-            </span>
-            <em>prueba</em>
           </li>
         {/if}
       </ol>

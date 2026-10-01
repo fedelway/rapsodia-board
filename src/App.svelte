@@ -117,7 +117,7 @@
       <div>
         <strong>{game.currentPlayer.name}</strong>
         <p>
-          {game.phase === 'harmony' ? 'Armonía' : 'Melodía'}
+          {game.phase === 'melody' ? 'Melodía' : 'Armonía'}
           · rol {ROLE_LABELS[game.role]}
         </p>
       </div>
@@ -129,17 +129,6 @@
   <section class="controls">
     <div class="row voices">
       <div class="group">
-        <p>Sonido de armonía</p>
-        <select class="combo" value={game.harmonyVoice} disabled={loadingHarmony} onchange={onHarmonyVoice}>
-          {#each HARMONY_VOICE_OPTIONS as voice}
-            <option value={voice.id}>{voice.label}</option>
-          {/each}
-        </select>
-        {#if loadingHarmony}
-          <span class="hint">Cargando samples…</span>
-        {/if}
-      </div>
-      <div class="group">
         <p>Sonido de melodía</p>
         <select class="combo" value={game.melodyVoice} disabled={loadingMelody} onchange={onMelodyVoice}>
           {#each MELODY_VOICE_OPTIONS as voice}
@@ -147,6 +136,17 @@
           {/each}
         </select>
         {#if loadingMelody}
+          <span class="hint">Cargando samples…</span>
+        {/if}
+      </div>
+      <div class="group">
+        <p>Sonido de armonía</p>
+        <select class="combo" value={game.harmonyVoice} disabled={loadingHarmony} onchange={onHarmonyVoice}>
+          {#each HARMONY_VOICE_OPTIONS as voice}
+            <option value={voice.id}>{voice.label}</option>
+          {/each}
+        </select>
+        {#if loadingHarmony}
           <span class="hint">Cargando samples…</span>
         {/if}
       </div>
@@ -240,7 +240,7 @@
           disabled={!game.canConfirmHarmony()}
           onclick={() => game.confirmHarmony()}
         >
-          Confirmar armonía
+          Confirmar armonía / terminar turno
         </button>
       {:else}
         <button

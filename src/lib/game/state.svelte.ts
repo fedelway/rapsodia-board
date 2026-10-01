@@ -244,7 +244,8 @@ class GameState {
   }
 
   canUndoMelody(): boolean {
-    if (this.phase === 'melody' && this.pick) return true
+    if (this.phase !== 'melody') return false
+    if (this.pick) return true
     return this.melody.length > this.melodyStartLength
   }
 
@@ -258,7 +259,8 @@ class GameState {
   }
 
   undoMelody() {
-    if (this.phase === 'melody' && this.pick) {
+    if (this.phase !== 'melody') return
+    if (this.pick) {
       this.pick = null
       return
     }

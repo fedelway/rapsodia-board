@@ -80,6 +80,38 @@ h2 {
   font-size: 0.92rem;
 }
 
+.round {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.4rem;
+  padding: 2px 8px 4px;
+  border-right: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  margin-right: 4px;
+}
+
+.round span {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.round strong {
+  background: transparent;
+  color: var(--text-h);
+  padding: 0;
+  font-size: 1.35rem;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.meter-badge strong {
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
 .turn p {
   margin: 4px 0 0;
   font-size: 0.88rem;
@@ -156,8 +188,13 @@ button.primary.ghost {
   border-color: #efe7d8;
 }
 
-button.quiet {
-  background: transparent;
+.duration-pick {
+  min-width: 52px;
+  min-height: 52px;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .hint {
@@ -188,6 +225,32 @@ button.quiet {
   min-width: 180px;
 }
 
-a {
+.tempo {
+  flex: 1;
+  min-width: 220px;
+  margin: 0;
+}
+
+.tempo p {
+  margin-bottom: 6px;
+}
+
+.tempo-row {
+  flex: 1;
+}
+
+.tempo-row input[type='range'] {
+  flex: 1;
+  min-width: 140px;
+  accent-color: #efe7d8;
+}
+
+.tempo-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 5.8em;
   color: var(--text-h);
+}
+
+.playback {
+  align-items: flex-end;
 }

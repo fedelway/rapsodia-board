@@ -75,3 +75,10 @@ export function midiForPcAtOrAbove(pc: number, minMidi: number): number {
   while (pitchClassOfMidi(midi) !== target) midi += 1
   return midi
 }
+
+export function midiForPcAtOrBelow(pc: number, maxMidi: number): number {
+  let midi = maxMidi
+  const target = wrapPc(pc)
+  while (pitchClassOfMidi(midi) !== target) midi -= 1
+  return midi
+}

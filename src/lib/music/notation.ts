@@ -1,8 +1,8 @@
 import type { ClosedChord, MelodyNote } from '../game/state.svelte'
 import { americanChordSymbol, closedChordCaption, type VoicedNote } from './harmony'
+import { firstBarBeats, harmonyLeadBeats, melodyLeadBeats, type Meter, type Opening } from './meter'
 
-const BEATS_PER_BAR = 4
-const UNITS = [4, 2, 1, 0.5] as const
+const UNITS = [6, 4, 3, 2, 1.5, 1, 0.75, 0.5, 0.25] as const
 const PREVIEW_STYLE = { fillStyle: '#d35400', strokeStyle: '#d35400' }
 
 export type ScoreEvent = {
@@ -12,20 +12,26 @@ export type ScoreEvent = {
   preview?: boolean
   previewIndex?: number
   symbol?: string
+  tieToNext?: boolean
 }
 
 function largestFit(beats: number): number {
   for (const unit of UNITS) {
     if (unit <= beats + 1e-9) return unit
   }
-  return 0.5
+  return 0.25
 }
 
-function vexDuration(beats: number): string {
-  if (beats >= 4) return 'w'
-  if (beats >= 2) return 'h'
-  if (beats >= 1) return 'q'
-  return '8'
+function vexDurationParts(beats: number): { duration: string; dots: number } {
+  if (beats >= 6 - 1e-9) return { duration: 'w', dots: 1 }
+  if (beats >= 4 - 1e-9) return { duration: 'w', dots: 0 }
+  if (beats >= 3 - 1e-9) return { duration: 'h', dots: 1 }
+  if (beats >= 2 - 1e-9) return { duration: 'h', dots: 0 }
+  if (beats >= 1.5 - 1e-9) return { duration: 'q', dots: 1 }
+  if (beats >= 1 - 1e-9) return { duration: 'q', dots: 0 }
+  if (beats >= 0.75 - 1e-9) return { duration: '8', dots: 1 }
+  if (beats >= 0.5 - 1e-9) return { duration: '8', dots: 0 }
+  return { duration: '16', dots: 0 }
 }
 
 export function vexPitch(midi: number, label: string): string {
@@ -51,48 +57,64 @@ function padWithRests(events: ScoreEvent[], totalBeats: number): ScoreEvent[] {
   return [...events, { keys: ['B4'], beats: totalBeats - sum, rest: true }]
 }
 
-function copyMeta(event: ScoreEvent, beats: number): ScoreEvent {
+function copyMeta(event: ScoreEvent, beats: number, opts?: { symbol?: string; tieToNext?: boolean }): ScoreEvent {
   return {
     keys: event.keys,
     beats,
     rest: event.rest,
     preview: event.preview,
     previewIndex: event.previewIndex,
-    symbol: event.symbol,
+    symbol: opts?.symbol,
+    tieToNext: opts?.tieToNext,
   }
 }
 
-export function toMeasures(events: ScoreEvent[]): ScoreEvent[][] {
+function barCapacity(index: number, barBeats: number, first: number): number {
+  return index === 0 ? first : barBeats
+}
+
+export function toMeasures(events: ScoreEvent[], barBeats: number, first: number): ScoreEvent[][] {
   const measures: ScoreEvent[][] = [[]]
   let used = 0
+  let index = 0
+  const cap = () => barCapacity(index, barBeats, first)
 
   const push = (event: ScoreEvent) => {
     const last = measures[measures.length - 1]!
     last.push(event)
     used += event.beats
-    if (used >= BEATS_PER_BAR - 1e-9) {
+    if (used >= cap() - 1e-9) {
       measures.push([])
+      index += 1
       used = 0
     }
   }
 
   for (const event of events) {
     let remaining = event.beats
+    let firstPart = true
     while (remaining > 1e-6) {
-      const room = BEATS_PER_BAR - used
+      const room = cap() - used
       if (room <= 1e-6) {
         measures.push([])
+        index += 1
         used = 0
         continue
       }
       const chunk = largestFit(Math.min(remaining, room))
-      push(copyMeta(event, chunk))
       remaining -= chunk
+      push(
+        copyMeta(event, chunk, {
+          symbol: firstPart ? event.symbol : undefined,
+          tieToNext: !event.rest && remaining > 1e-6,
+        }),
+      )
+      firstPart = false
     }
   }
 
   if (used > 1e-6) {
-    let rest = BEATS_PER_BAR - used
+    let rest = cap() - used
     while (rest > 1e-6) {
       const chunk = largestFit(rest)
       push({ keys: ['B4'], beats: chunk, rest: true })
@@ -102,18 +124,45 @@ export function toMeasures(events: ScoreEvent[]): ScoreEvent[][] {
 
   if (measures[measures.length - 1]?.length === 0) measures.pop()
   if (measures.length === 0) {
-    return [[{ keys: ['B4'], beats: 4, rest: true }]]
+    return [[{ keys: ['B4'], beats: first, rest: true }]]
   }
   return measures
+}
+
+function paddedLength(content: number, barBeats: number, first: number, anacrusis: boolean): number {
+  if (anacrusis) {
+    const after = Math.max(0, content - first)
+    const full = Math.max(1, Math.ceil(after / barBeats - 1e-9))
+    return first + full * barBeats
+  }
+  if (content <= first + 1e-9) return first
+  const after = content - first
+  const full = Math.max(1, Math.ceil(after / barBeats - 1e-9))
+  return first + full * barBeats
+}
+
+function prependLeadRest(events: ScoreEvent[], beats: number): ScoreEvent[] {
+  if (beats <= 1e-9) return events
+  return [{ keys: ['B4'], beats, rest: true }, ...events]
+}
+
+function vexVoiceTime(quarterBeats: number, meter: Meter, isFullBar: boolean): string {
+  if (isFullBar) return meter.id
+  const eighths = Math.max(1, Math.round(quarterBeats * 2))
+  if (meter.denominator === 4 && Math.abs(quarterBeats - Math.round(quarterBeats)) < 1e-9) {
+    return `${Math.round(quarterBeats)}/4`
+  }
+  return `${eighths}/8`
 }
 
 function toEasyScore(events: ScoreEvent[]): string {
   return events
     .map((event) => {
-      const duration = vexDuration(event.beats)
-      if (event.rest) return `B4/${duration}/r`
-      if (event.keys.length > 1) return `(${event.keys.join(' ')})/${duration}`
-      return `${event.keys[0]}/${duration}`
+      const { duration, dots } = vexDurationParts(event.beats)
+      const dotted = dots > 0 ? '.' : ''
+      if (event.rest) return `B4/${duration}/r${dotted}`
+      if (event.keys.length > 1) return `(${event.keys.join(' ')})/${duration}${dotted}`
+      return `${event.keys[0]}/${duration}${dotted}`
     })
     .join(', ')
 }
@@ -188,6 +237,8 @@ export async function renderStaff(
     assembledHarmony?: ClosedChord | null
     melody: MelodyNote[]
     pendingMelody?: MelodyNote | null
+    meter: Meter
+    opening: Opening
     width: number
   },
   cancelled?: () => boolean,
@@ -195,11 +246,24 @@ export async function renderStaff(
   const { Factory, BarlineType } = await import('vexflow')
   if (cancelled?.()) return
   const width = Math.max(el.clientWidth || input.width, 560)
-  const harmonyEvents = chordsToEvents(input.chords, input.assembledHarmony)
-  const melodyEvents = melodyToEvents(input.melody, input.pendingMelody)
-  const total = Math.max(eventSum(harmonyEvents), eventSum(melodyEvents), BEATS_PER_BAR)
-  const harmonyMeasures = toMeasures(padWithRests(harmonyEvents, total))
-  const melodyMeasures = toMeasures(padWithRests(melodyEvents, total))
+  const barBeats = input.meter.barBeats
+  const first = firstBarBeats(input.meter, input.opening)
+  const harmonyEvents = prependLeadRest(
+    chordsToEvents(input.chords, input.assembledHarmony),
+    harmonyLeadBeats(input.opening),
+  )
+  const melodyEvents = prependLeadRest(
+    melodyToEvents(input.melody, input.pendingMelody),
+    melodyLeadBeats(input.opening),
+  )
+  const total = paddedLength(
+    Math.max(eventSum(harmonyEvents), eventSum(melodyEvents)),
+    barBeats,
+    first,
+    input.opening.kind === 'anacrusis',
+  )
+  const harmonyMeasures = toMeasures(padWithRests(harmonyEvents, total), barBeats, first)
+  const melodyMeasures = toMeasures(padWithRests(melodyEvents, total), barBeats, first)
   const measureCount = Math.max(harmonyMeasures.length, melodyMeasures.length, 1)
 
   const innerWidth = Math.floor(width) - 24
@@ -220,6 +284,7 @@ export async function renderStaff(
     },
   })
   const score = vf.EasyScore()
+  const placedMelody: { note: ReturnType<typeof score.notes>[number]; event: ScoreEvent; measure: number }[] = []
 
   for (let i = 0; i < measureCount; i += 1) {
     const col = i % measuresPerLine
@@ -232,15 +297,26 @@ export async function renderStaff(
       y: 22 + line * systemHeight,
       width: measureWidth,
     })
-    const melodyEventsInBar = melodyMeasures[i] ?? [{ keys: ['B4'], beats: 4, rest: true }]
-    const harmonyEventsInBar = harmonyMeasures[i] ?? [{ keys: ['B4'], beats: 4, rest: true }]
+    const fallbackBeats = barCapacity(i, barBeats, first)
+    const fallback = [{ keys: ['B4'], beats: fallbackBeats, rest: true }]
+    const melodyEventsInBar = melodyMeasures[i] ?? fallback
+    const harmonyEventsInBar = harmonyMeasures[i] ?? fallback
+    const measureBeats = eventSum(melodyEventsInBar)
+    const time = vexVoiceTime(measureBeats, input.meter, Math.abs(measureBeats - barBeats) < 1e-9)
+    score.set({ time })
     const melodyNotes = score.notes(toEasyScore(melodyEventsInBar), { stem: 'up' })
     paintPreview(melodyNotes, melodyEventsInBar)
+    melodyEventsInBar.forEach((event, index) => {
+      const note = melodyNotes[index]
+      if (note) placedMelody.push({ note, event, measure: i })
+    })
 
     const chordText = harmonyEventsInBar.map((event) => {
+      const { duration, dots } = vexDurationParts(event.beats)
       const textNote = vf.TextNote({
-        text: event.rest || !event.symbol ? '' : event.symbol,
-        duration: vexDuration(event.beats),
+        text: event.rest || !event.symbol ? ' ' : event.symbol,
+        duration,
+        dots,
         font: { family: 'Georgia, Times, serif', size: 14, weight: 'bold' },
       })
       textNote.setLine(-1)
@@ -251,13 +327,29 @@ export async function renderStaff(
     })
 
     const stave = system.addStave({
-      voices: [score.voice(melodyNotes), vf.Voice().addTickables(chordText)],
+      voices: [score.voice(melodyNotes, { time }), vf.Voice({ time }).addTickables(chordText)],
     })
     if (col === 0) stave.addClef('treble')
-    if (i === 0) stave.addTimeSignature('4/4')
-    stave.setMeasure(i + 1)
-    stave.setBegBarType(col === 0 ? BarlineType.SINGLE : BarlineType.NONE)
+    if (i === 0) stave.addTimeSignature(input.meter.id)
+    stave.setMeasure(input.opening.kind === 'anacrusis' ? i : i + 1)
+    const startBarAfterPickup = input.opening.kind === 'anacrusis' && i === 0
+    stave.setBegBarType(col === 0 && !startBarAfterPickup ? BarlineType.SINGLE : BarlineType.NONE)
     stave.setEndBarType(isLast ? BarlineType.END : BarlineType.SINGLE)
+  }
+
+  for (let i = 0; i < placedMelody.length - 1; i += 1) {
+    const from = placedMelody[i]!
+    const to = placedMelody[i + 1]!
+    if (!from.event.tieToNext || from.event.rest || to.event.rest) continue
+    const indexes = from.event.keys.map((_, keyIndex) => keyIndex)
+    const sameLine =
+      Math.floor(from.measure / measuresPerLine) === Math.floor(to.measure / measuresPerLine)
+    if (sameLine) {
+      vf.StaveTie({ from: from.note, to: to.note, firstIndexes: indexes, lastIndexes: indexes })
+    } else {
+      vf.StaveTie({ from: from.note, to: null, firstIndexes: indexes, lastIndexes: indexes })
+      vf.StaveTie({ from: null, to: to.note, firstIndexes: indexes, lastIndexes: indexes })
+    }
   }
 
   vf.draw()

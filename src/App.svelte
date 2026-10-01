@@ -1,9 +1,11 @@
 <script lang="ts">
   import NoteBoard from './lib/components/NoteBoard.svelte'
+  import NoteFigure from './lib/components/NoteFigure.svelte'
   import Score from './lib/components/Score.svelte'
   import StaffScore from './lib/components/StaffScore.svelte'
+  import SetupScreen from './lib/components/SetupScreen.svelte'
   import { game } from './lib/game/state.svelte'
-  import { playComposition, previewMidi, setHarmonyVoice, setMelodyVoice, stopPlayback } from './lib/audio/engine'
+  import { playComposition, previewHarmony, previewMidi, setHarmonyVoice, setMelodyVoice, stopPlayback, TEMPO_MAX, TEMPO_MIN } from './lib/audio/engine'
   import {
     HARMONY_VOICE_OPTIONS,
     MELODY_VOICE_OPTIONS,
@@ -13,6 +15,7 @@
   import {
     HARMONY_DURATION_BEATS,
     HARMONY_DURATION_LABELS,
+    MELODY_DURATION_BEATS,
     MELODY_DURATION_LABELS,
     MELODY_OCTAVES,
     ROLE_LABELS,
@@ -20,9 +23,10 @@
     type MelodyDurationKey,
     type MelodyOctave,
   } from './lib/music/harmony'
+  import { playbackOffsets } from './lib/music/meter'
 
   const harmonyKeys = Object.keys(HARMONY_DURATION_BEATS) as HarmonyDurationKey[]
-  const melodyKeys = Object.keys(MELODY_DURATION_LABELS) as MelodyDurationKey[]
+  const melodyKeys = Object.keys(MELODY_DURATION_BEATS) as MelodyDurationKey[]
 
   let loadingHarmony = $state(false)
   let loadingMelody = $state(false)
@@ -34,7 +38,7 @@
     try {
       await setHarmonyVoice(id)
       if (game.selectedHarmonyOption) {
-        await previewMidi(game.selectedHarmonyOption.midi, false)
+        await previewHarmony(game.harmonyPreviewMidis())
       }
     } finally {
       loadingHarmony = false
@@ -63,23 +67,34 @@
   }
 
   async function listenPiece() {
+    const offsets = playbackOffsets(game.opening)
     await playComposition({
       chords: game.closedChords,
       inProgress: game.inProgressChordForPreview(),
       melody: game.melody,
+      bpm: game.tempoBpm,
+      melodyOffsetBeats: offsets.melody,
+      harmonyOffsetBeats: offsets.harmony,
     })
   }
 
   async function listenWithPendingMelody() {
+    const offsets = playbackOffsets(game.opening)
     await playComposition({
       chords: game.closedChords,
       inProgress: game.inProgressChordForPreview(),
       melody: game.melody,
       pendingMelody: game.selectedMelodyNote ?? null,
+      bpm: game.tempoBpm,
+      melodyOffsetBeats: offsets.melody,
+      harmonyOffsetBeats: offsets.harmony,
     })
   }
 </script>
 
+{#if !game.started}
+  <SetupScreen />
+{:else}
 <main>
   <header>
     <div>
@@ -90,6 +105,14 @@
       class="turn"
       style="--player: {game.currentPlayer.color}; --ink: {game.currentPlayer.ink}"
     >
+      <div class="round" aria-label="Ronda {game.roundNumber}">
+        <span>Ronda</span>
+        <strong>{game.roundNumber}</strong>
+      </div>
+      <div class="round meter-badge" aria-label="Compás {game.meterId}">
+        <span>Compás</span>
+        <strong>{game.meterId}</strong>
+      </div>
       <span class="dot"></span>
       <div>
         <strong>{game.currentPlayer.name}</strong>
@@ -182,10 +205,13 @@
           {#each melodyKeys as key}
             <button
               type="button"
+              class="duration-pick"
               class:active={game.melodyDuration === key}
+              aria-label={MELODY_DURATION_LABELS[key]}
+              title={MELODY_DURATION_LABELS[key]}
               onclick={() => (game.melodyDuration = key)}
             >
-              {MELODY_DURATION_LABELS[key]}
+              <NoteFigure kind={key} size={26} />
             </button>
           {/each}
         </div>
@@ -200,9 +226,9 @@
       {:else if game.phase === 'harmony' && game.role === 'extremes'}
         Elegí una tercera hacia afuera desde el grave o el agudo del acorde.
       {:else if game.phase === 'harmony' && game.role === 'seventh'}
-        Podés agregar una 7ma menor o mayor, o dejar el acorde, y definir la duración.
+        Podés agregar una 7ma menor o mayor, otra tónica una tercera abajo (nuevo bajo), o dejar el acorde, y definir la duración.
       {:else}
-        Podés elegir octava y duración, agregar una o varias notas de melodía, o pasar el turno.
+        Podés elegir octava y duración, agregar una o varias notas de melodía, o pasar a componer la armonía.
       {/if}
     </p>
 
@@ -225,13 +251,49 @@
         >
           Confirmar nota de melodía
         </button>
-        <button type="button" class="primary ghost" onclick={() => game.passTurn()}>
-          Pasar turno
+        <button type="button" class="primary ghost" onclick={() => game.passToHarmony()}>
+          Pasar a armonía
         </button>
       {/if}
+      <button
+        type="button"
+        class="quiet"
+        disabled={!game.canUndoMelody()}
+        onclick={() => game.undoMelody()}
+      >
+        Deshacer nota
+      </button>
+      <button
+        type="button"
+        class="quiet"
+        disabled={!game.canUndoHarmony()}
+        onclick={() => game.undoHarmony()}
+      >
+        Deshacer armonía
+      </button>
     </div>
 
-    <div class="row actions">
+    <div class="row actions playback">
+      <div class="group tempo">
+        <p>Tempo</p>
+        <div class="row tempo-row">
+          <input
+            type="range"
+            min={TEMPO_MIN}
+            max={TEMPO_MAX}
+            step="1"
+            value={game.tempoBpm}
+            aria-valuemin={TEMPO_MIN}
+            aria-valuemax={TEMPO_MAX}
+            aria-valuenow={game.tempoBpm}
+            aria-label="Tempo en negras por minuto"
+            oninput={(e) => {
+              game.tempoBpm = Number((e.currentTarget as HTMLInputElement).value)
+            }}
+          />
+          <span class="tempo-value">{game.tempoBpm} BPM</span>
+        </div>
+      </div>
       <button type="button" onclick={listenPiece}>Escuchar composición</button>
       <button
         type="button"
@@ -247,3 +309,4 @@
   <Score />
   <StaffScore />
 </main>
+{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { game } from '../game/state.svelte'
+  import NoteFigure from './NoteFigure.svelte'
   import {
     americanChordSymbol,
     closedChordCaption,
@@ -7,6 +7,7 @@
     MELODY_DURATION_LABELS,
   } from '../music/harmony'
   import { scientificOctave } from '../music/pitch'
+  import { game } from '../game/state.svelte'
 
   const pendingHarmony = $derived(game.pendingHarmonyNote())
   const pendingMelody = $derived(game.selectedMelodyNote)
@@ -56,14 +57,19 @@
           <li>
             <span class="idx">{i + 1}.</span>
             {note.label}{scientificOctave(note.midi)}
-            <em>{MELODY_DURATION_LABELS[note.durationKey]}</em>
+            <span class="fig" title={MELODY_DURATION_LABELS[note.durationKey]}>
+              <NoteFigure kind={note.durationKey} size={18} />
+            </span>
           </li>
         {/each}
         {#if pendingMelody}
           <li class="preview">
             <span class="idx">+</span>
             {pendingMelody.label}{scientificOctave(pendingMelody.midi)}
-            <em>{MELODY_DURATION_LABELS[pendingMelody.durationKey]} · prueba</em>
+            <span class="fig" title={MELODY_DURATION_LABELS[pendingMelody.durationKey]}>
+              <NoteFigure kind={pendingMelody.durationKey} size={18} />
+            </span>
+            <em>prueba</em>
           </li>
         {/if}
       </ol>
@@ -100,11 +106,10 @@
     opacity: 0.6;
   }
 
-  em {
-    font-style: normal;
-    opacity: 0.7;
-    margin-left: 8px;
-    font-size: 0.85rem;
+  .fig {
+    display: inline-flex;
+    vertical-align: middle;
+    margin-left: 6px;
   }
 
   .open {
@@ -113,6 +118,13 @@
 
   .preview {
     color: #e67e22;
+  }
+
+  em {
+    font-style: normal;
+    opacity: 0.7;
+    margin-left: 8px;
+    font-size: 0.85rem;
   }
 
   .empty {

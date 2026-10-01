@@ -26,6 +26,8 @@
     const pendingMelody = game.selectedMelodyNote ?? null
     const chords = [...game.closedChords]
     const melody = [...game.melody]
+    const meter = game.meter
+    const opening = game.opening
     const width = hostWidth
     const node = host
     let cancelled = false
@@ -33,7 +35,7 @@
       if (!node || !open || cancelled) return
       void renderStaff(
         node,
-        { chords, assembledHarmony: assembled, melody, pendingMelody, width },
+        { chords, assembledHarmony: assembled, melody, pendingMelody, width, meter, opening },
         () => cancelled,
       )
         .then(() => {
@@ -56,7 +58,7 @@
     <em>{open ? 'ocultar' : 'mostrar'}</em>
   </summary>
   <p class="legend">
-    Melodía en el pentagrama · barras de compás 4/4 · cifrado al completar la tríada · al cerrar el acorde, las notas van entre paréntesis · naranja = melodía de prueba
+    Melodía en el pentagrama · compás {game.meterId} · cifrado al completar la tríada · al cerrar el acorde, las notas van entre paréntesis · naranja = melodía de prueba
   </p>
   {#if error}
     <p class="fail">{error}</p>

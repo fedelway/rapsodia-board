@@ -8,8 +8,13 @@ import {
   type SampleInstrumentId,
 } from './voices'
 
-const BPM = 120
-const SEC_PER_BEAT = 60 / BPM
+const DEFAULT_BPM = 120
+export const TEMPO_MIN = 40
+export const TEMPO_MAX = 200
+
+function clampBpm(bpm: number) {
+  return Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, bpm))
+}
 
 type CacheEntry = {
   sampler: Tone.Sampler
@@ -40,7 +45,9 @@ function acquire(id: SampleInstrumentId): Promise<Tone.Sampler> {
   const sampler = new Tone.Sampler({
     urls,
     baseUrl: `${SAMPLE_BASE_URL}${id}/`,
-    release: 0.85,
+    attack: 0,
+    release: 0.08,
+    curve: 'linear',
     volume: -6,
   }).toDestination()
 
@@ -101,6 +108,15 @@ export async function previewMidi(midi: number, asMelody = false) {
   else harmonySampler!.triggerAttackRelease(note, dur, time)
 }
 
+export async function previewHarmony(midis: number[]) {
+  await ensureStarted()
+  if (midis.length === 0) return
+  harmonySampler!.releaseAll()
+  const notes = midis.map(midiToNote)
+  const dur = midis.length > 1 ? 0.9 : 0.55
+  harmonySampler!.triggerAttackRelease(notes, dur, Tone.now())
+}
+
 export function stopPlayback() {
   harmonySampler?.releaseAll()
   melodySampler?.releaseAll()
@@ -111,20 +127,34 @@ export type PlayRequest = {
   inProgress: ClosedChord | null
   melody: MelodyNote[]
   pendingMelody?: MelodyNote | null
+  bpm?: number
+  melodyOffsetBeats?: number
+  harmonyOffsetBeats?: number
 }
 
 export async function playComposition(req: PlayRequest) {
   await ensureStarted()
   stopPlayback()
-  const now = Tone.now() + 0.05
+  if (harmonySampler) {
+    harmonySampler.release = 0.08
+    harmonySampler.curve = 'linear'
+  }
+  if (melodySampler) {
+    melodySampler.release = 0.08
+    melodySampler.curve = 'linear'
+  }
+  const bpm = clampBpm(req.bpm ?? DEFAULT_BPM)
+  Tone.getTransport().bpm.value = bpm
+  const quarter = Tone.Time('4n').toSeconds()
+  const start = Tone.now() + 0.05
   const chords: ClosedChord[] = [...req.chords]
   if (req.inProgress && req.inProgress.notes.length > 0) {
     chords.push(req.inProgress)
   }
 
-  let t = now
+  let t = start + Math.max(0, req.harmonyOffsetBeats ?? 0) * quarter
   for (const chord of chords) {
-    const dur = Math.max(chord.durationBeats * SEC_PER_BEAT, 0.2)
+    const dur = chord.durationBeats * quarter
     const notes = chord.notes.map((n) => midiToNote(n.midi))
     if (notes.length > 0) {
       harmonySampler!.triggerAttackRelease(notes, dur, t)
@@ -132,11 +162,11 @@ export async function playComposition(req: PlayRequest) {
     t += dur
   }
 
-  let tm = now
+  let tm = start + Math.max(0, req.melodyOffsetBeats ?? 0) * quarter
   const melody = [...req.melody]
   if (req.pendingMelody) melody.push(req.pendingMelody)
   for (const note of melody) {
-    const dur = Math.max(note.durationBeats * SEC_PER_BEAT, 0.1)
+    const dur = note.durationBeats * quarter
     melodySampler!.triggerAttackRelease(midiToNote(note.midi), dur, tm)
     tm += dur
   }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { game } from '../game/state.svelte'
-  import { previewMidi } from '../audio/engine'
+  import { previewHarmony, previewMidi } from '../audio/engine'
   import {
     ACCIDENTALS,
     ACCIDENTAL_SYMBOL,
@@ -20,8 +20,8 @@
     game.selectPitch(letter, accidental)
     if (game.phase === 'melody' && game.selectedMelodyNote) {
       await previewMidi(game.selectedMelodyNote.midi, true)
-    } else if (game.selectedHarmonyOption) {
-      await previewMidi(game.selectedHarmonyOption.midi, false)
+    } else if (game.phase === 'harmony') {
+      await previewHarmony(game.harmonyPreviewMidis())
     }
   }
 </script>

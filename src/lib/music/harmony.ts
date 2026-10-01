@@ -1,6 +1,7 @@
 import {
   midiInOctaveC4,
   midiForPcAtOrAbove,
+  midiForPcAtOrBelow,
   pitchClassOfMidi,
   wrapPc,
   displayName,
@@ -12,7 +13,7 @@ export const ROLE_LABELS: Record<HarmonyRole, string> = {
   root: 'raíz',
   third: 'tercera',
   extremes: 'extremos',
-  seventh: '7ma y duración',
+  seventh: '7ma, bajo y duración',
 }
 
 export const HARMONY_ROLES: HarmonyRole[] = ['root', 'third', 'extremes', 'seventh']
@@ -105,11 +106,27 @@ function americanRootName(pc: number, notes: VoicedNote[]): string {
   return displayName(pc).replaceAll('♯', '#').replaceAll('♭', 'b')
 }
 
-/** Cifrado americano: C, Cm, C7, Cmaj7, Cm7, Cdim, C+, … */
+/** Con 4 notas, si el grave forma 7ma, esa es la tónica (Bø7, no Dm6). */
+export function detectChordRoot(notes: VoicedNote[]): number {
+  const unique = [...new Set(notes.map((note) => wrapPc(note.pc)))]
+  if (unique.length < 3) return notes[0]?.pc ?? 0
+  if (unique.length >= 4) {
+    const lowestPc = pitchClassOfMidi(Math.min(...notes.map((note) => note.midi)))
+    const fromBass = new Set(unique.map((pc) => wrapPc(pc - lowestPc)))
+    if (fromBass.has(10) || fromBass.has(11)) return lowestPc
+    const seventhRoot = unique.find((start) => {
+      const iv = new Set(unique.map((pc) => wrapPc(pc - start)))
+      return (iv.has(3) || iv.has(4)) && (iv.has(10) || iv.has(11))
+    })
+    if (seventhRoot !== undefined) return seventhRoot
+  }
+  return detectTriadRoot(unique)
+}
+
 export function americanChordSymbol(notes: VoicedNote[]): string {
   if (notes.length === 0) return ''
   const unique = [...new Set(notes.map((note) => note.pc))]
-  const root = unique.length >= 3 ? detectTriadRoot(unique) : notes[0]!.pc
+  const root = unique.length >= 3 ? detectChordRoot(notes) : notes[0]!.pc
   const iv = new Set(unique.map((pc) => wrapPc(pc - root)))
   const name = americanRootName(root, notes)
 
@@ -161,12 +178,12 @@ export function legalSeventhOptions(voicing: VoicedNote[]): LegalOption[] {
   const pcs = voicing.map((n) => n.pc)
   const root = detectTriadRoot(pcs)
   const taken = new Set(pcs)
+  const minMidi = Math.min(...voicing.map((n) => n.midi))
   const maxMidi = Math.max(...voicing.map((n) => n.midi))
   const rootName = americanRootName(root, voicing)
   const preferFlat = /b|♭/i.test(rootName)
-  const sevenths = [10, 11]
   const options: LegalOption[] = []
-  for (const interval of sevenths) {
+  for (const interval of [10, 11] as const) {
     const pc = wrapPc(root + interval)
     if (taken.has(pc)) continue
     const midi = midiForPcAtOrAbove(pc, maxMidi + 1)
@@ -175,6 +192,20 @@ export function legalSeventhOptions(voicing: VoicedNote[]): LegalOption[] {
       pc,
       midi,
       label: interval === 10 ? `${tone} (7m)` : `${tone} (7M)`,
+    })
+  }
+  for (const { delta, preferFlatBass } of [
+    { delta: 3, preferFlatBass: false },
+    { delta: 4, preferFlatBass: true },
+  ] as const) {
+    const pc = wrapPc(root - delta)
+    if (taken.has(pc) || options.some((option) => option.pc === pc)) continue
+    const midi = midiForPcAtOrBelow(pc, minMidi - 1)
+    const tone = displayName(pc, preferFlatBass)
+    options.push({
+      pc,
+      midi,
+      label: `${tone} (bajo)`,
     })
   }
   return options
@@ -201,6 +232,12 @@ export const HARMONY_DURATION_BEATS = {
 
 export type HarmonyDurationKey = keyof typeof HARMONY_DURATION_BEATS
 
+export function harmonyDurationBeats(key: HarmonyDurationKey, barBeats: number): number {
+  if (key === 'halfBar') return barBeats / 2
+  if (key === 'twoBars') return barBeats * 2
+  return barBeats
+}
+
 export const HARMONY_DURATION_LABELS: Record<HarmonyDurationKey, string> = {
   halfBar: 'Medio compás',
   bar: '1 compás',
@@ -210,7 +247,9 @@ export const HARMONY_DURATION_LABELS: Record<HarmonyDurationKey, string> = {
 export const MELODY_DURATION_BEATS = {
   eighth: 0.5,
   quarter: 1,
+  dottedQuarter: 1.5,
   half: 2,
+  dottedHalf: 3,
   whole: 4,
 } as const
 
@@ -222,6 +261,8 @@ export type MelodyOctave = (typeof MELODY_OCTAVES)[number]
 export const MELODY_DURATION_LABELS: Record<MelodyDurationKey, string> = {
   eighth: 'Corchea',
   quarter: 'Negra',
+  dottedQuarter: 'Negra con punto',
   half: 'Blanca',
+  dottedHalf: 'Blanca con punto',
   whole: 'Redonda',
 }

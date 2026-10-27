@@ -202,6 +202,44 @@ button.primary.ghost {
   opacity: 0.75;
 }
 
+.subdivision {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 78%, #000 22%);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subdivision-head {
+  gap: 10px;
+}
+
+.subdivision-head strong {
+  color: var(--text-h);
+}
+
+.pending-slots {
+  gap: 6px;
+}
+
+.slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 7px;
+  background: #2a2833;
+  font-size: 0.88rem;
+}
+
+.slot-index {
+  opacity: 0.6;
+  font-size: 0.75rem;
+}
+
 .actions {
   padding-top: 4px;
 }

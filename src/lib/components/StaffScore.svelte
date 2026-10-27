@@ -23,7 +23,7 @@
   $effect(() => {
     if (!open || !host) return
     const assembled = game.assembledHarmonyForScore()
-    const pendingMelody = game.selectedMelodyNote ?? null
+    const pendingMelody = game.pendingMelodyNotes
     const chords = [...game.closedChords]
     const melody = [...game.melody]
     const meter = game.meter
@@ -58,7 +58,7 @@
     <em>{open ? 'ocultar' : 'mostrar'}</em>
   </summary>
   <p class="legend">
-    Melodía en el pentagrama · compás {game.meterId} · cifrado al completar la tríada · al cerrar el acorde, las notas van entre paréntesis · naranja = melodía de prueba
+    Melodía en el pentagrama · compás {game.meterId} · tresillos y dosillos con corchete · cifrado al completar la tríada · al cerrar el acorde, las notas van entre paréntesis · naranja = melodía de prueba
   </p>
   {#if error}
     <p class="fail">{error}</p>

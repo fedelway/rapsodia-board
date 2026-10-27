@@ -4,20 +4,20 @@
     americanChordSymbol,
     closedChordCaption,
     HARMONY_DURATION_LABELS,
-    MELODY_DURATION_LABELS,
   } from '../music/harmony'
+  import { figureLabel } from '../music/subdivisions'
   import { scientificOctave } from '../music/pitch'
   import { game } from '../game/state.svelte'
 
   const pendingHarmony = $derived(game.pendingHarmonyNote())
-  const pendingMelody = $derived(game.selectedMelodyNote)
+  const pendingMelody = $derived(game.pendingMelodyNotes)
   const assembled = $derived(game.currentVoicing.length >= 3 ? americanChordSymbol(game.currentVoicing) : '')
 </script>
 
 <section class="score">
   <div>
     <h2>Melodía</h2>
-    {#if game.melody.length === 0 && !pendingMelody}
+    {#if game.melody.length === 0 && pendingMelody.length === 0}
       <p class="empty">Todavía no hay notas de melodía.</p>
     {:else}
       <ol>
@@ -25,21 +25,27 @@
           <li>
             <span class="idx">{i + 1}.</span>
             {note.label}{scientificOctave(note.midi)}
-            <span class="fig" title={MELODY_DURATION_LABELS[note.durationKey]}>
-              <NoteFigure kind={note.durationKey} size={18} />
+            <span class="fig" title={figureLabel(note.figure, note.tuplet)}>
+              <NoteFigure kind={note.figure} size={18} />
+              {#if note.tuplet}
+                <span class="tuplet">{note.tuplet.numNotes}</span>
+              {/if}
             </span>
           </li>
         {/each}
-        {#if pendingMelody}
+        {#each pendingMelody as note, i}
           <li class="preview">
-            <span class="idx">+</span>
-            {pendingMelody.label}{scientificOctave(pendingMelody.midi)}
-            <span class="fig" title={MELODY_DURATION_LABELS[pendingMelody.durationKey]}>
-              <NoteFigure kind={pendingMelody.durationKey} size={18} />
+            <span class="idx">{i === 0 ? '+' : '·'}</span>
+            {note.label}{scientificOctave(note.midi)}
+            <span class="fig" title={figureLabel(note.figure, note.tuplet)}>
+              <NoteFigure kind={note.figure} size={18} />
+              {#if note.tuplet}
+                <span class="tuplet">{note.tuplet.numNotes}</span>
+              {/if}
             </span>
-            <em>prueba</em>
+            {#if i === 0}<em>prueba</em>{/if}
           </li>
-        {/if}
+        {/each}
       </ol>
     {/if}
   </div>
@@ -108,8 +114,20 @@
 
   .fig {
     display: inline-flex;
+    align-items: flex-start;
     vertical-align: middle;
     margin-left: 6px;
+  }
+
+  .tuplet {
+    font-size: 0.62rem;
+    font-weight: 800;
+    line-height: 1;
+    margin-left: 1px;
+    margin-top: -1px;
+    padding: 1px 3px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text-h) 16%, transparent);
   }
 
   .open {

@@ -19,12 +19,23 @@ import {
 } from '../music/pitch'
 import type { HarmonyVoiceId, MelodyVoiceId } from '../audio/voices'
 import {
+  melodyLeadBeats,
   meterById,
   openingById,
   openingFitsMeter,
+  remainingMeasureBeats,
   type MeterId,
   type OpeningId,
 } from '../music/meter'
+import {
+  MELODY_SUBDIVISIONS,
+  subdivisionBeats,
+  subdivisionById,
+  subdivisionHasTuplet,
+  type MelodyFigure,
+  type MelodySubdivision,
+  type TupletSpec,
+} from '../music/subdivisions'
 
 export type TurnPhase = 'harmony' | 'melody'
 
@@ -54,6 +65,10 @@ export type MelodyNote = {
   label: string
   durationBeats: number
   durationKey: MelodyDurationKey
+  figure: MelodyFigure
+  /** Identifica todas las notas de una misma subdivisión. */
+  groupId?: string
+  tuplet?: TupletSpec
 }
 
 export type NotePick = {
@@ -71,6 +86,9 @@ class GameState {
   melody = $state<MelodyNote[]>([])
   pick = $state<NotePick | null>(null)
   leaveChord = $state(false)
+  activeSubdivision = $state<MelodySubdivision | null>(null)
+  subdivisionNotes = $state<MelodyNote[]>([])
+  subdivisionGroupId = $state<string | null>(null)
   harmonyDuration = $state<HarmonyDurationKey>('bar')
   melodyDuration = $state<MelodyDurationKey>('quarter')
   melodyOctave = $state<MelodyOctave>(5)
@@ -82,6 +100,7 @@ class GameState {
   melodyStartLength = $state(0)
   lastHarmonyKind = $state<'add' | 'close' | null>(null)
   melodyByTurn = $state<number[]>([])
+  private subdivisionSerial = 0
 
   currentPlayerId = $derived<PlayerId>(
     ((this.chordStartPlayer + this.roleIndex) % 4) as PlayerId,
@@ -104,13 +123,52 @@ class GameState {
   selectedMelodyNote = $derived.by((): MelodyNote | undefined => {
     if (!this.pick || this.phase !== 'melody') return undefined
     const pc = pitchClassFromLetter(this.pick.letter, this.pick.accidental)
-    return {
+    const base = {
       pc,
       midi: midiAtOctave(pc, this.melodyOctave),
       label: labelFromSelection(this.pick.letter, this.pick.accidental),
+    }
+
+    if (this.activeSubdivision) {
+      const part = this.activeSubdivision.parts[this.subdivisionNotes.length]
+      if (!part) return undefined
+      return {
+        ...base,
+        durationBeats: part.beats,
+        durationKey: this.activeSubdivision.parent,
+        figure: part.figure,
+        groupId: this.subdivisionGroupId ?? undefined,
+        tuplet: part.tuplet,
+      }
+    }
+
+    return {
+      ...base,
       durationBeats: MELODY_DURATION_BEATS[this.melodyDuration],
       durationKey: this.melodyDuration,
+      figure: this.melodyDuration,
     }
+  })
+
+  subdivisionTotalParts = $derived(this.activeSubdivision?.parts.length ?? 0)
+  subdivisionEnteredCount = $derived(this.subdivisionNotes.length)
+  subdivisionComplete = $derived(
+    !!this.activeSubdivision &&
+      this.subdivisionNotes.length >= this.activeSubdivision.parts.length,
+  )
+
+  availableSubdivisions = $derived(
+    (MELODY_SUBDIVISIONS[this.melodyDuration] ?? []).map((subdivision) => ({
+      subdivision,
+      fits: this.subdivisionFits(subdivision),
+    })),
+  )
+
+  pendingMelodyNotes = $derived.by((): MelodyNote[] => {
+    const notes = [...this.subdivisionNotes]
+    const selected = this.selectedMelodyNote
+    if (selected) notes.push(selected)
+    return notes
   })
 
   startGame(startingPlayer: PlayerId, meterId: MeterId = '4/4', openingId: OpeningId = 'tetic') {
@@ -122,10 +180,14 @@ class GameState {
     this.melody = []
     this.pick = null
     this.leaveChord = false
+    this.activeSubdivision = null
+    this.subdivisionNotes = []
+    this.subdivisionGroupId = null
     this.harmonyDuration = 'bar'
     this.melodyStartLength = 0
     this.lastHarmonyKind = null
     this.melodyByTurn = []
+    this.subdivisionSerial = 0
     this.meterId = meterId
     const opening = openingById(openingId)
     this.openingId = openingFitsMeter(meterById(meterId), opening) ? openingId : 'tetic'
@@ -155,6 +217,52 @@ class GameState {
 
   canConfirmMelody(): boolean {
     return this.phase === 'melody' && this.selectedMelodyNote !== undefined
+  }
+
+  canConfirmSubdivision(): boolean {
+    return this.phase === 'melody' && this.subdivisionComplete
+  }
+
+  /** Los tresillos/dosillos no se pueden partir entre compases. */
+  subdivisionFits(subdivision: MelodySubdivision): boolean {
+    if (!subdivisionHasTuplet(subdivision)) return true
+    const committed = this.melody.reduce((sum, note) => sum + note.durationBeats, 0)
+    const pending = this.subdivisionNotes.reduce((sum, note) => sum + note.durationBeats, 0)
+    const before = melodyLeadBeats(this.opening) + committed + pending
+    const room = remainingMeasureBeats(before, this.meter, this.opening)
+    return subdivisionBeats(subdivision) <= room + 1e-9
+  }
+
+  startSubdivision(id: string): boolean {
+    if (this.phase !== 'melody' || this.activeSubdivision) return false
+    const subdivision = subdivisionById(id)
+    if (!subdivision || subdivision.parent !== this.melodyDuration) return false
+    if (!this.subdivisionFits(subdivision)) return false
+    this.activeSubdivision = subdivision
+    this.subdivisionNotes = []
+    this.subdivisionGroupId = `subdivision-${this.subdivisionSerial}`
+    this.subdivisionSerial += 1
+    this.pick = null
+    return true
+  }
+
+  cancelSubdivision() {
+    if (!this.activeSubdivision) return
+    this.activeSubdivision = null
+    this.subdivisionNotes = []
+    this.subdivisionGroupId = null
+    this.pick = null
+  }
+
+  confirmSubdivision() {
+    if (!this.canConfirmSubdivision() || !this.activeSubdivision) return
+    const parts = this.activeSubdivision.parts
+    if (this.subdivisionNotes.length !== parts.length) return
+    this.melody = [...this.melody, ...this.subdivisionNotes]
+    this.activeSubdivision = null
+    this.subdivisionNotes = []
+    this.subdivisionGroupId = null
+    this.pick = null
   }
 
   confirmHarmony() {
@@ -202,6 +310,12 @@ class GameState {
   confirmMelody() {
     const note = this.selectedMelodyNote
     if (!note) return
+    if (this.activeSubdivision) {
+      if (this.subdivisionComplete) return
+      this.subdivisionNotes = [...this.subdivisionNotes, note]
+      this.pick = null
+      return
+    }
     this.melody = [...this.melody, note]
     this.pick = null
   }
@@ -213,7 +327,7 @@ class GameState {
   }
 
   passToHarmony() {
-    if (this.phase !== 'melody') return
+    if (this.phase !== 'melody' || this.activeSubdivision) return
     this.pick = null
     this.phase = 'harmony'
   }
@@ -222,6 +336,9 @@ class GameState {
     const added = this.melody.length - this.melodyStartLength
     this.melodyByTurn = [...this.melodyByTurn, added]
     this.melodyStartLength = this.melody.length
+    this.activeSubdivision = null
+    this.subdivisionNotes = []
+    this.subdivisionGroupId = null
     if (this.roleIndex === 3) {
       this.chordStartPlayer = ((this.chordStartPlayer + 1) % 4) as PlayerId
       this.roleIndex = 0
@@ -246,6 +363,7 @@ class GameState {
   canUndoMelody(): boolean {
     if (this.phase !== 'melody') return false
     if (this.pick) return true
+    if (this.activeSubdivision) return true
     return this.melody.length > this.melodyStartLength
   }
 
@@ -253,6 +371,7 @@ class GameState {
     if (this.phase === 'harmony' && (this.pick || this.leaveChord)) return true
     if (this.phase === 'harmony') return true
     if (this.phase !== 'melody') return false
+    if (this.activeSubdivision) return false
     if (this.pick) return false
     if (this.melody.length > this.melodyStartLength) return false
     return this.melodyByTurn.length > 0
@@ -264,12 +383,30 @@ class GameState {
       this.pick = null
       return
     }
+    if (this.activeSubdivision) {
+      if (this.subdivisionNotes.length > 0) {
+        this.subdivisionNotes = this.subdivisionNotes.slice(0, -1)
+      } else {
+        this.cancelSubdivision()
+      }
+      return
+    }
     if (this.melody.length <= this.melodyStartLength) return
-    this.melody = this.melody.slice(0, -1)
+    const last = this.melody[this.melody.length - 1]
+    if (last?.groupId) {
+      let cut = this.melody.length
+      while (cut > this.melodyStartLength && this.melody[cut - 1]?.groupId === last.groupId) {
+        cut -= 1
+      }
+      this.melody = this.melody.slice(0, Math.max(cut, this.melodyStartLength))
+    } else {
+      this.melody = this.melody.slice(0, -1)
+    }
     this.pick = null
   }
 
   undoHarmony() {
+    if (this.activeSubdivision) return
     if (this.phase === 'harmony' && (this.pick || this.leaveChord)) {
       this.pick = null
       this.leaveChord = false

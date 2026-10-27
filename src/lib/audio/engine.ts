@@ -126,7 +126,7 @@ export type PlayRequest = {
   chords: ClosedChord[]
   inProgress: ClosedChord | null
   melody: MelodyNote[]
-  pendingMelody?: MelodyNote | null
+  pendingMelody?: MelodyNote[] | null
   bpm?: number
   melodyOffsetBeats?: number
   harmonyOffsetBeats?: number
@@ -163,8 +163,7 @@ export async function playComposition(req: PlayRequest) {
   }
 
   let tm = start + Math.max(0, req.melodyOffsetBeats ?? 0) * quarter
-  const melody = [...req.melody]
-  if (req.pendingMelody) melody.push(req.pendingMelody)
+  const melody = [...req.melody, ...(req.pendingMelody ?? [])]
   for (const note of melody) {
     const dur = note.durationBeats * quarter
     melodySampler!.triggerAttackRelease(midiToNote(note.midi), dur, tm)

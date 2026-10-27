@@ -1,6 +1,7 @@
 import type { ClosedChord, MelodyNote } from '../game/state.svelte'
 import { americanChordSymbol, closedChordCaption, type VoicedNote } from './harmony'
 import { firstBarBeats, harmonyLeadBeats, melodyLeadBeats, type Meter, type Opening } from './meter'
+import { MELODY_FIGURE_VEX, type MelodyFigure, type TupletSpec } from './subdivisions'
 
 const UNITS = [6, 4, 3, 2, 1.5, 1, 0.75, 0.5, 0.25] as const
 const PREVIEW_STYLE = { fillStyle: '#d35400', strokeStyle: '#d35400' }
@@ -13,6 +14,9 @@ export type ScoreEvent = {
   previewIndex?: number
   symbol?: string
   tieToNext?: boolean
+  figure?: MelodyFigure
+  tuplet?: TupletSpec
+  tupletGroup?: string
 }
 
 function largestFit(beats: number): number {
@@ -66,6 +70,10 @@ function copyMeta(event: ScoreEvent, beats: number, opts?: { symbol?: string; ti
     previewIndex: event.previewIndex,
     symbol: opts?.symbol,
     tieToNext: opts?.tieToNext,
+    // Las figuras explícitas solo hacen falta para tuplets; el resto se infiere de los beats.
+    figure: event.tuplet ? event.figure : undefined,
+    tuplet: event.tuplet,
+    tupletGroup: event.tupletGroup,
   }
 }
 
@@ -90,7 +98,50 @@ export function toMeasures(events: ScoreEvent[], barBeats: number, first: number
     }
   }
 
-  for (const event of events) {
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i]!
+    if (event.tupletGroup) {
+      const group: ScoreEvent[] = [event]
+      let j = i + 1
+      while (j < events.length && events[j]?.tupletGroup === event.tupletGroup) {
+        group.push(events[j]!)
+        j += 1
+      }
+
+      // Una subdivisión a medio cargar (solo pasa en la vista previa) se
+      // completa con silencios para poder dibujar el corchete y cerrar el compás.
+      const spec = event.tuplet
+      if (spec) {
+        while (group.length < spec.numNotes) {
+          group.push({
+            keys: ['B4'],
+            beats: event.beats,
+            rest: true,
+            preview: event.preview,
+            figure: event.figure,
+            tuplet: spec,
+            tupletGroup: event.tupletGroup,
+          })
+        }
+      }
+
+      let room = cap() - used
+      if (eventSum(group) > room + 1e-6) {
+        // Un tresillo/dosillo nunca debería partirse; si no entra, pasa entero
+        // al compás siguiente dejando el resto del compás como silencio.
+        while (room > 1e-6) {
+          const chunk = largestFit(room)
+          push({ keys: ['B4'], beats: chunk, rest: true })
+          room -= chunk
+        }
+      }
+      for (const groupEvent of group) {
+        push(copyMeta(groupEvent, groupEvent.beats))
+      }
+      i = j - 1
+      continue
+    }
+
     let remaining = event.beats
     let firstPart = true
     while (remaining > 1e-6) {
@@ -158,7 +209,11 @@ function vexVoiceTime(quarterBeats: number, meter: Meter, isFullBar: boolean): s
 function toEasyScore(events: ScoreEvent[]): string {
   return events
     .map((event) => {
-      const { duration, dots } = vexDurationParts(event.beats)
+      const parts =
+        event.tuplet && event.figure
+          ? MELODY_FIGURE_VEX[event.figure]
+          : vexDurationParts(event.beats)
+      const { duration, dots } = parts
       const dotted = dots > 0 ? '.' : ''
       if (event.rest) return `B4/${duration}/r${dotted}`
       if (event.keys.length > 1) return `(${event.keys.join(' ')})/${duration}${dotted}`
@@ -198,19 +253,58 @@ export function chordsToEvents(
   return events
 }
 
-export function melodyToEvents(notes: MelodyNote[], pending?: MelodyNote | null): ScoreEvent[] {
-  const events: ScoreEvent[] = notes.map((note) => ({
+function melodyNoteToEvent(note: MelodyNote, preview = false): ScoreEvent {
+  return {
     keys: [vexPitch(note.midi, note.label)],
     beats: note.durationBeats,
-  }))
-  if (pending) {
-    events.push({
-      keys: [vexPitch(pending.midi, pending.label)],
-      beats: pending.durationBeats,
-      preview: true,
-    })
+    preview: preview || undefined,
+    figure: note.figure,
+    tuplet: note.tuplet,
+    tupletGroup: note.tuplet && note.groupId ? note.groupId : undefined,
   }
-  return events
+}
+
+export function melodyToEvents(notes: MelodyNote[], pending?: MelodyNote[] | null): ScoreEvent[] {
+  const events = [
+    ...notes.map((note) => melodyNoteToEvent(note)),
+    ...(pending ?? []).map((note) => melodyNoteToEvent(note, true)),
+  ]
+  return completeTupletGroups(events)
+}
+
+/**
+ * Una subdivisión a medio cargar (solo pasa en la vista previa) se completa
+ * con silencios para poder dibujar el corchete y cerrar el compás.
+ */
+function completeTupletGroups(events: ScoreEvent[]): ScoreEvent[] {
+  const result: ScoreEvent[] = []
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i]!
+    result.push(event)
+    if (!event.tupletGroup || !event.tuplet) continue
+
+    let count = 1
+    let j = i + 1
+    while (j < events.length && events[j]?.tupletGroup === event.tupletGroup) {
+      result.push(events[j]!)
+      count += 1
+      j += 1
+    }
+    while (count < event.tuplet.numNotes) {
+      result.push({
+        keys: ['B4'],
+        beats: event.beats,
+        rest: true,
+        preview: event.preview,
+        figure: event.figure,
+        tuplet: event.tuplet,
+        tupletGroup: event.tupletGroup,
+      })
+      count += 1
+    }
+    i = j - 1
+  }
+  return result
 }
 
 function paintPreview(
@@ -236,7 +330,7 @@ export async function renderStaff(
     chords: ClosedChord[]
     assembledHarmony?: ClosedChord | null
     melody: MelodyNote[]
-    pendingMelody?: MelodyNote | null
+    pendingMelody?: MelodyNote[] | null
     meter: Meter
     opening: Opening
     width: number
@@ -305,6 +399,27 @@ export async function renderStaff(
     const time = vexVoiceTime(measureBeats, input.meter, Math.abs(measureBeats - barBeats) < 1e-9)
     score.set({ time })
     const melodyNotes = score.notes(toEasyScore(melodyEventsInBar), { stem: 'up' })
+
+    const tupletGroups = new Map<string, { indexes: number[]; spec: TupletSpec }>()
+    melodyEventsInBar.forEach((event, index) => {
+      if (!event.tupletGroup || !event.tuplet) return
+      const existing = tupletGroups.get(event.tupletGroup)
+      if (existing) existing.indexes.push(index)
+      else tupletGroups.set(event.tupletGroup, { indexes: [index], spec: event.tuplet })
+    })
+    for (const { indexes, spec } of tupletGroups.values()) {
+      const groupNotes = indexes.flatMap((index) => {
+        const note = melodyNotes[index]
+        return note ? [note] : []
+      })
+      if (groupNotes.length === spec.numNotes) {
+        score.tuplet(groupNotes, {
+          numNotes: spec.numNotes,
+          notesOccupied: spec.notesOccupied,
+        })
+      }
+    }
+
     paintPreview(melodyNotes, melodyEventsInBar)
     melodyEventsInBar.forEach((event, index) => {
       const note = melodyNotes[index]

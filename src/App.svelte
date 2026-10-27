@@ -4,6 +4,7 @@
   import Score from './lib/components/Score.svelte'
   import StaffScore from './lib/components/StaffScore.svelte'
   import SetupScreen from './lib/components/SetupScreen.svelte'
+  import SubdivisionPicker from './lib/components/SubdivisionPicker.svelte'
   import { game } from './lib/game/state.svelte'
   import { playComposition, previewHarmony, previewMidi, setHarmonyVoice, setMelodyVoice, stopPlayback, TEMPO_MAX, TEMPO_MIN } from './lib/audio/engine'
   import {
@@ -30,6 +31,26 @@
 
   let loadingHarmony = $state(false)
   let loadingMelody = $state(false)
+  let showSubdivisions = $state(false)
+
+  $effect(() => {
+    if (game.phase !== 'melody' || game.activeSubdivision) showSubdivisions = false
+  })
+
+  function chooseDuration(key: MelodyDurationKey) {
+    if (game.activeSubdivision) return
+    game.melodyDuration = key
+    showSubdivisions = false
+  }
+
+  function startSubdivision(id: string) {
+    if (game.startSubdivision(id)) showSubdivisions = false
+  }
+
+  function passToHarmony() {
+    showSubdivisions = false
+    game.passToHarmony()
+  }
 
   async function onHarmonyVoice(event: Event) {
     const id = (event.currentTarget as HTMLSelectElement).value as HarmonyVoiceId
@@ -84,7 +105,7 @@
       chords: game.closedChords,
       inProgress: game.inProgressChordForPreview(),
       melody: game.melody,
-      pendingMelody: game.selectedMelodyNote ?? null,
+      pendingMelody: game.pendingMelodyNotes,
       bpm: game.tempoBpm,
       melodyOffsetBeats: offsets.melody,
       harmonyOffsetBeats: offsets.harmony,
@@ -207,14 +228,71 @@
               type="button"
               class="duration-pick"
               class:active={game.melodyDuration === key}
+              disabled={!!game.activeSubdivision}
               aria-label={MELODY_DURATION_LABELS[key]}
               title={MELODY_DURATION_LABELS[key]}
-              onclick={() => (game.melodyDuration = key)}
+              onclick={() => chooseDuration(key)}
             >
               <NoteFigure kind={key} size={26} />
             </button>
           {/each}
         </div>
+      </div>
+      <div class="group">
+        <p>Subdivisión</p>
+        {#if game.activeSubdivision}
+          <div class="subdivision">
+            <div class="row subdivision-head">
+              <strong>{game.activeSubdivision.label}</strong>
+              <span class="hint">
+                {#if game.subdivisionComplete}
+                  {game.subdivisionTotalParts} de {game.subdivisionTotalParts} notas
+                {:else}
+                  Nota {game.subdivisionEnteredCount + 1} de {game.subdivisionTotalParts}
+                {/if}
+              </span>
+              <button type="button" class="quiet" onclick={() => game.cancelSubdivision()}>
+                Cancelar subdivisión
+              </button>
+            </div>
+            {#if game.subdivisionNotes.length > 0}
+              <div class="row pending-slots">
+                {#each game.subdivisionNotes as note, i}
+                  <span class="slot">
+                    <span class="slot-index">{i + 1}</span>
+                    {note.label}
+                    <NoteFigure kind={note.figure} size={16} />
+                  </span>
+                {/each}
+              </div>
+            {/if}
+            {#if !game.subdivisionComplete}
+              <p class="hint">Cargá todas las notas antes de confirmar la subdivisión.</p>
+            {/if}
+          </div>
+        {:else if showSubdivisions}
+          <SubdivisionPicker
+            options={game.availableSubdivisions}
+            onchoose={startSubdivision}
+            oncancel={() => (showSubdivisions = false)}
+          />
+        {:else}
+          <div class="row">
+            <button
+              type="button"
+              disabled={game.availableSubdivisions.length === 0}
+              title={game.availableSubdivisions.length === 0
+                ? 'Esta figura no admite subdivisiones'
+                : 'Ver las subdivisiones disponibles'}
+              onclick={() => (showSubdivisions = true)}
+            >
+              Iniciar subdivisión
+            </button>
+            {#if game.availableSubdivisions.length === 0}
+              <span class="hint">Esta figura no admite subdivisiones.</span>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -227,8 +305,14 @@
         Elegí una tercera hacia afuera desde el grave o el agudo del acorde.
       {:else if game.phase === 'harmony' && game.role === 'seventh'}
         Podés agregar una 7ma menor o mayor, otra tónica una tercera abajo (nuevo bajo), o dejar el acorde, y definir la duración.
+      {:else if game.activeSubdivision}
+        {#if game.subdivisionComplete}
+          Revisá la subdivisión, escuchala si querés y confirmala para poder avanzar.
+        {:else}
+          Cargá las {game.subdivisionTotalParts} notas de la subdivisión antes de avanzar.
+        {/if}
       {:else}
-        Podés elegir octava y duración, agregar una o varias notas de melodía, o pasar a componer la armonía.
+        Podés elegir octava y duración, iniciar una subdivisión, agregar una o varias notas de melodía, o pasar a componer la armonía.
       {/if}
     </p>
 
@@ -243,15 +327,35 @@
           Confirmar armonía / terminar turno
         </button>
       {:else}
+        {#if game.activeSubdivision && game.subdivisionComplete}
+          <button type="button" class="primary" onclick={() => game.confirmSubdivision()}>
+            Confirmar subdivisión
+          </button>
+        {:else if game.activeSubdivision}
+          <button
+            type="button"
+            class="primary"
+            disabled={!game.canConfirmMelody()}
+            onclick={() => game.confirmMelody()}
+          >
+            Agregar nota {game.subdivisionEnteredCount + 1} de {game.subdivisionTotalParts}
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="primary"
+            disabled={!game.canConfirmMelody()}
+            onclick={() => game.confirmMelody()}
+          >
+            Confirmar nota de melodía
+          </button>
+        {/if}
         <button
           type="button"
-          class="primary"
-          disabled={!game.canConfirmMelody()}
-          onclick={() => game.confirmMelody()}
+          class="primary ghost"
+          disabled={!!game.activeSubdivision}
+          onclick={passToHarmony}
         >
-          Confirmar nota de melodía
-        </button>
-        <button type="button" class="primary ghost" onclick={() => game.passToHarmony()}>
           Pasar a armonía
         </button>
       {/if}
@@ -297,7 +401,7 @@
       <button type="button" onclick={listenPiece}>Escuchar composición</button>
       <button
         type="button"
-        disabled={!game.selectedMelodyNote}
+        disabled={game.pendingMelodyNotes.length === 0}
         onclick={listenWithPendingMelody}
       >
         Escuchar con melodía pendiente

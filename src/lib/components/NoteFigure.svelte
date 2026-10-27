@@ -1,16 +1,20 @@
 <script lang="ts">
-  import type { MelodyDurationKey } from '../music/harmony'
+  import type { MelodyFigure } from '../music/subdivisions'
 
   let {
     kind,
     size = 28,
     asRest = false,
-  }: { kind: MelodyDurationKey; size?: number; asRest?: boolean } = $props()
+  }: { kind: MelodyFigure; size?: number; asRest?: boolean } = $props()
 
   const open = $derived(kind === 'half' || kind === 'dottedHalf' || kind === 'whole')
   const stem = $derived(kind !== 'whole')
-  const flag = $derived(kind === 'eighth')
-  const dot = $derived(kind === 'dottedQuarter' || kind === 'dottedHalf')
+  const flags = $derived(
+    kind === 'sixteenth' ? 2 : kind === 'eighth' || kind === 'dottedEighth' ? 1 : 0,
+  )
+  const dot = $derived(
+    kind === 'dottedQuarter' || kind === 'dottedHalf' || kind === 'dottedEighth',
+  )
 </script>
 
 <svg
@@ -46,9 +50,15 @@
     {#if stem}
       <path d="M18.2 31.2 V8" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" />
     {/if}
-    {#if flag}
+    {#if flags >= 1}
       <path
         d="M18.2 8 C26 10 28 16 26 22 C22 16 18.2 14 18.2 14"
+        fill="currentColor"
+      />
+    {/if}
+    {#if flags >= 2}
+      <path
+        d="M18.2 14 C26 16 28 22 26 28 C22 22 18.2 20 18.2 20"
         fill="currentColor"
       />
     {/if}

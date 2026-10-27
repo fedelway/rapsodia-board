@@ -96,6 +96,33 @@ export function firstBarBeats(meter: Meter, opening: Opening): number {
   return meter.barBeats
 }
 
+/**
+ * Cuántos beats quedan libres en el compás donde cae una nota que empieza
+ * `beatsBefore` beats después del inicio de la partitura.
+ */
+export function remainingMeasureBeats(beatsBefore: number, meter: Meter, opening: Opening): number {
+  const first = firstBarBeats(meter, opening)
+  let index = 0
+  let used = 0
+  let remaining = Math.max(0, beatsBefore)
+
+  while (remaining > 1e-9) {
+    const capacity = index === 0 ? first : meter.barBeats
+    const room = capacity - used
+    if (remaining < room - 1e-9) {
+      used += remaining
+      remaining = 0
+      break
+    }
+    remaining -= room
+    index += 1
+    used = 0
+  }
+
+  const capacity = index === 0 ? first : meter.barBeats
+  return Math.max(0, capacity - used)
+}
+
 export function melodyLeadBeats(opening: Opening): number {
   return opening.kind === 'acephalous' ? opening.beats : 0
 }

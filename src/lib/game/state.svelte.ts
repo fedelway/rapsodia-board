@@ -100,6 +100,8 @@ class GameState {
   melodyStartLength = $state(0)
   lastHarmonyKind = $state<'add' | 'close' | null>(null)
   melodyByTurn = $state<number[]>([])
+  /** Recordatorio para mover al director al cerrar la ronda. */
+  roundNotice = $state(false)
   private subdivisionSerial = 0
 
   currentPlayerId = $derived<PlayerId>(
@@ -187,6 +189,7 @@ class GameState {
     this.melodyStartLength = 0
     this.lastHarmonyKind = null
     this.melodyByTurn = []
+    this.roundNotice = false
     this.subdivisionSerial = 0
     this.meterId = meterId
     const opening = openingById(openingId)
@@ -339,14 +342,20 @@ class GameState {
     this.activeSubdivision = null
     this.subdivisionNotes = []
     this.subdivisionGroupId = null
-    if (this.roleIndex === 3) {
+    const finishedRound = this.roleIndex === 3
+    if (finishedRound) {
       this.chordStartPlayer = ((this.chordStartPlayer + 1) % 4) as PlayerId
       this.roleIndex = 0
+      this.roundNotice = true
     } else {
       this.roleIndex += 1
     }
     this.harmonyDuration = 'bar'
     this.phase = 'melody'
+  }
+
+  dismissRoundNotice() {
+    this.roundNotice = false
   }
 
   dropMelodyOfLastTurn() {
@@ -445,6 +454,7 @@ class GameState {
     this.currentVoicing = [...chord.triad]
     this.harmonyDuration = chord.durationKey
     this.phase = 'harmony'
+    this.roundNotice = false
   }
 
   inProgressChordForPreview(): ClosedChord | null {

@@ -32,9 +32,20 @@
   let loadingHarmony = $state(false)
   let loadingMelody = $state(false)
   let showSubdivisions = $state(false)
+  let roundModalButton = $state<HTMLButtonElement>()
 
   $effect(() => {
     if (game.phase !== 'melody' || game.activeSubdivision) showSubdivisions = false
+  })
+
+  $effect(() => {
+    if (!game.roundNotice) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    roundModalButton?.focus()
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
   })
 
   function chooseDuration(key: MelodyDurationKey) {
@@ -144,6 +155,23 @@
       </div>
     </div>
   </header>
+
+  {#if game.roundNotice}
+    <div class="round-modal-backdrop">
+      <div class="round-modal" role="dialog" aria-modal="true" aria-labelledby="round-notice">
+        <p class="kicker">Fin de ronda</p>
+        <h2 id="round-notice">Antes de finalizar la ronda no olvides mover al director</h2>
+        <button
+          bind:this={roundModalButton}
+          type="button"
+          class="primary"
+          onclick={() => game.dismissRoundNotice()}
+        >
+          Listo
+        </button>
+      </div>
+    </div>
+  {/if}
 
   <NoteBoard playerColor={game.currentPlayer.color} playerInk={game.currentPlayer.ink} />
 

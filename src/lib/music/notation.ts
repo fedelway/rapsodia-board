@@ -55,6 +55,16 @@ function eventSum(events: ScoreEvent[]): number {
   return events.reduce((sum, event) => sum + event.beats, 0)
 }
 
+const DIATONIC_STEPS: Record<string, number> = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 }
+// Línea superior del pentagrama en clave de sol.
+const TOP_STAFF_LINE_INDEX = 5 * 7 + DIATONIC_STEPS.F!
+
+function diatonicIndex(key: string): number {
+  const match = key.match(/^([A-Ga-g])[#b]?(-?\d+)$/)
+  if (!match) return TOP_STAFF_LINE_INDEX
+  return Number(match[2]) * 7 + (DIATONIC_STEPS[match[1]!.toUpperCase()] ?? 0)
+}
+
 function padWithRests(events: ScoreEvent[], totalBeats: number): ScoreEvent[] {
   const sum = eventSum(events)
   if (sum >= totalBeats - 1e-9) return events
@@ -337,7 +347,7 @@ export async function renderStaff(
   },
   cancelled?: () => boolean,
 ) {
-  const { Factory, BarlineType } = await import('vexflow')
+  const { Factory, BarlineType, Tuplet } = await import('vexflow')
   if (cancelled?.()) return
   const width = Math.max(el.clientWidth || input.width, 560)
   const barBeats = input.meter.barBeats
@@ -363,8 +373,19 @@ export async function renderStaff(
   const innerWidth = Math.floor(width) - 24
   const measuresPerLine = innerWidth >= 920 ? 4 : innerWidth >= 700 ? 3 : 2
   const lineCount = Math.ceil(measureCount / measuresPerLine)
-  const systemHeight = 118
-  const height = 16 + lineCount * systemHeight
+  // Si hay tresillos con notas altas, su corchete va debajo del pentagrama y
+  // necesita más aire para no tocar el cifrado del sistema siguiente.
+  const hasBottomTuplet = melodyMeasures.some((measure) =>
+    measure.some(
+      (event) =>
+        event.tuplet && event.keys.some((key) => diatonicIndex(key) > TOP_STAFF_LINE_INDEX),
+    ),
+  )
+  const systemHeight = hasBottomTuplet ? 170 : 118
+  // Espacio extra arriba de cada pentagrama para que el cifrado no se cruce
+  // con los corchetes de tresillos/dosillos.
+  const chordHeadroom = 48
+  const height = 16 + chordHeadroom + lineCount * systemHeight
 
   el.replaceChildren()
   if (!el.id) el.id = `rapsodia-staff-${Math.random().toString(36).slice(2, 9)}`
@@ -388,7 +409,7 @@ export async function renderStaff(
     const measureWidth = Math.floor(innerWidth / colsOnLine)
     const system = vf.System({
       x: 12 + col * measureWidth,
-      y: 22 + line * systemHeight,
+      y: 22 + chordHeadroom + line * systemHeight,
       width: measureWidth,
     })
     const fallbackBeats = barCapacity(i, barBeats, first)
@@ -413,9 +434,20 @@ export async function renderStaff(
         return note ? [note] : []
       })
       if (groupNotes.length === spec.numNotes) {
+        // Con notas altas el corchete superior se acerca al cifrado; en ese
+        // caso va debajo del grupo para mantener ambos separados.
+        const highest = Math.max(
+          ...indexes.map((index) =>
+            Math.max(
+              ...(melodyEventsInBar[index]?.keys ?? []).map(diatonicIndex),
+              TOP_STAFF_LINE_INDEX,
+            ),
+          ),
+        )
         score.tuplet(groupNotes, {
           numNotes: spec.numNotes,
           notesOccupied: spec.notesOccupied,
+          location: highest > TOP_STAFF_LINE_INDEX ? Tuplet.LOCATION_BOTTOM : Tuplet.LOCATION_TOP,
         })
       }
     }
@@ -434,7 +466,7 @@ export async function renderStaff(
         dots,
         font: { family: 'Georgia, Times, serif', size: 14, weight: 'bold' },
       })
-      textNote.setLine(-1)
+      textNote.setLine(-4)
       if (event.preview && event.symbol) {
         textNote.setStyle(PREVIEW_STYLE)
       }

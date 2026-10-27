@@ -16,25 +16,80 @@ function clampBpm(bpm: number) {
   return Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, bpm))
 }
 
+type ScheduledSource = {
+  stop(time?: unknown): unknown
+  onended: () => void
+}
+
+/**
+ * Sampler que recuerda las fuentes de audio que programa.
+ *
+ * `triggerAttackRelease` borra la lista interna de Tone en cuanto agenda el
+ * release, así que `releaseAll()` no puede cortar las notas futuras. Guardando
+ * las fuentes podemos detener todo (lo que suena y lo que está por sonar)
+ * al pulsar "Detener" o al volver a pedir la reproducción.
+ */
+class CancellableSampler extends Tone.Sampler {
+  private scheduled = new Set<ScheduledSource>()
+
+  override triggerAttack(
+    notes: Parameters<Tone.Sampler['triggerAttack']>[0],
+    time?: Parameters<Tone.Sampler['triggerAttack']>[1],
+    velocity?: Parameters<Tone.Sampler['triggerAttack']>[2],
+  ) {
+    super.triggerAttack(notes, time, velocity)
+    const internals = this as unknown as {
+      _activeSources: Map<number, ScheduledSource[]>
+    }
+    internals._activeSources.forEach((sources) => {
+      sources.forEach((source) => {
+        if (this.scheduled.has(source)) return
+        this.scheduled.add(source)
+        const ended = source.onended
+        source.onended = () => {
+          this.scheduled.delete(source)
+          ended()
+        }
+      })
+    })
+    return this
+  }
+
+  /** Corta de inmediato todo lo programado, incluidas notas que aún no empezaron. */
+  cancel(time?: Tone.Unit.Time) {
+    const at = time ?? Tone.now()
+    this.scheduled.forEach((source) => {
+      try {
+        source.stop(at)
+      } catch {
+        // La fuente ya había terminado.
+      }
+    })
+    this.scheduled.clear()
+  }
+}
+
 type CacheEntry = {
-  sampler: Tone.Sampler
+  sampler: CancellableSampler
   refs: number
-  ready: Promise<Tone.Sampler>
+  ready: Promise<CancellableSampler>
 }
 
 const cache = new Map<SampleInstrumentId, CacheEntry>()
 
-let harmonySampler: Tone.Sampler | null = null
-let melodySampler: Tone.Sampler | null = null
+let harmonySampler: CancellableSampler | null = null
+let melodySampler: CancellableSampler | null = null
 let started = false
 let harmonyVoiceId: HarmonyVoiceId = 'piano'
 let melodyVoiceId: MelodyVoiceId = 'flute'
+/** Identifica la reproducción vigente para descartar pedidos que quedaron atrás. */
+let playbackRun = 0
 
 function midiToNote(midi: number): string {
   return Tone.Frequency(midi, 'midi').toNote()
 }
 
-function acquire(id: SampleInstrumentId): Promise<Tone.Sampler> {
+function acquire(id: SampleInstrumentId): Promise<CancellableSampler> {
   const existing = cache.get(id)
   if (existing) {
     existing.refs += 1
@@ -42,7 +97,7 @@ function acquire(id: SampleInstrumentId): Promise<Tone.Sampler> {
   }
 
   const urls = sampleUrlsFor(id)
-  const sampler = new Tone.Sampler({
+  const sampler = new CancellableSampler({
     urls,
     baseUrl: `${SAMPLE_BASE_URL}${id}/`,
     attack: 0,
@@ -118,8 +173,13 @@ export async function previewHarmony(midis: number[]) {
 }
 
 export function stopPlayback() {
-  harmonySampler?.releaseAll()
-  melodySampler?.releaseAll()
+  playbackRun += 1
+  silencePlayback()
+}
+
+function silencePlayback() {
+  harmonySampler?.cancel()
+  melodySampler?.cancel()
 }
 
 export type PlayRequest = {
@@ -133,8 +193,11 @@ export type PlayRequest = {
 }
 
 export async function playComposition(req: PlayRequest) {
+  const run = ++playbackRun
   await ensureStarted()
-  stopPlayback()
+  // Otra reproducción o "Detener" se pidió mientras cargaban los samples.
+  if (run !== playbackRun) return
+  silencePlayback()
   if (harmonySampler) {
     harmonySampler.release = 0.08
     harmonySampler.curve = 'linear'

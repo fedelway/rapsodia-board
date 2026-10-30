@@ -1,12 +1,14 @@
 <script lang="ts">
   import NoteBoard from './lib/components/NoteBoard.svelte'
   import NoteFigure from './lib/components/NoteFigure.svelte'
+  import ResumePrompt from './lib/components/ResumePrompt.svelte'
   import Score from './lib/components/Score.svelte'
   import StaffScore from './lib/components/StaffScore.svelte'
   import SetupScreen from './lib/components/SetupScreen.svelte'
   import SubdivisionPicker from './lib/components/SubdivisionPicker.svelte'
   import { game } from './lib/game/state.svelte'
-  import { playComposition, previewHarmony, previewMidi, setHarmonyVoice, setMelodyVoice, stopPlayback, TEMPO_MAX, TEMPO_MIN } from './lib/audio/engine'
+  import { readSave, writeSave, SAVE_VERSION, type SavedGame } from './lib/game/persistence'
+  import { playComposition, previewHarmony, previewMidi, setHarmonyVoice, setMasterVolume, setMelodyVoice, stopPlayback, TEMPO_MAX, TEMPO_MIN } from './lib/audio/engine'
   import {
     HARMONY_VOICE_OPTIONS,
     MELODY_VOICE_OPTIONS,
@@ -33,6 +35,102 @@
   let loadingMelody = $state(false)
   let showSubdivisions = $state(false)
   let roundModalButton = $state<HTMLButtonElement>()
+  let resumable = $state<SavedGame | null>(readSave())
+  let pendingSave: SavedGame | null = null
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+  const VOLUME_KEY = 'rapsodia.volume'
+
+  function readVolume(): number {
+    if (typeof localStorage === 'undefined') return 100
+    try {
+      const raw = localStorage.getItem(VOLUME_KEY)
+      if (raw === null) return 100
+      const value = Number(raw)
+      return Number.isFinite(value) && value >= 0 && value <= 100 ? Math.round(value) : 100
+    } catch {
+      return 100
+    }
+  }
+
+  const initialVolume = readVolume()
+  let volumePercent = $state(initialVolume)
+  let lastAudibleVolume = $state(initialVolume > 0 ? initialVolume : 70)
+
+  function changeVolume(value: number) {
+    volumePercent = Math.max(0, Math.min(100, Math.round(value)))
+    if (volumePercent > 0) lastAudibleVolume = volumePercent
+  }
+
+  function toggleMute() {
+    if (volumePercent > 0) {
+      lastAudibleVolume = volumePercent
+      volumePercent = 0
+    } else {
+      volumePercent = lastAudibleVolume
+    }
+  }
+
+  $effect(() => {
+    setMasterVolume(volumePercent / 100)
+    if (typeof localStorage === 'undefined') return
+    try {
+      localStorage.setItem(VOLUME_KEY, String(volumePercent))
+    } catch {
+      // Almacenamiento bloqueado: el volumen sigue funcionando en esta sesión.
+    }
+  })
+
+  function flushSave() {
+    if (saveTimer !== undefined) {
+      clearTimeout(saveTimer)
+      saveTimer = undefined
+    }
+    if (!pendingSave) return
+    writeSave(pendingSave)
+    pendingSave = null
+  }
+
+  function scheduleSave(save: SavedGame) {
+    pendingSave = save
+    if (saveTimer !== undefined) clearTimeout(saveTimer)
+    saveTimer = setTimeout(flushSave, 300)
+  }
+
+  $effect(() => {
+    if (!game.started) return
+    scheduleSave({
+      version: SAVE_VERSION,
+      createdAt: game.createdAt,
+      updatedAt: new Date().toISOString(),
+      state: game.snapshot(),
+      moves: game.moves,
+    })
+  })
+
+  $effect(() => {
+    const onPageHide = () => flushSave()
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushSave()
+    }
+    window.addEventListener('pagehide', onPageHide)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  })
+
+  async function resumeSaved() {
+    if (!resumable) return
+    game.restore(resumable)
+    resumable = null
+    await Promise.all([setHarmonyVoice(game.harmonyVoice), setMelodyVoice(game.melodyVoice)])
+  }
+
+  function startFresh() {
+    resumable = null
+  }
 
   $effect(() => {
     if (game.phase !== 'melody' || game.activeSubdivision) showSubdivisions = false
@@ -125,7 +223,11 @@
 </script>
 
 {#if !game.started}
-  <SetupScreen />
+  {#if resumable}
+    <ResumePrompt save={resumable} onresume={resumeSaved} onrestart={startFresh} />
+  {:else}
+    <SetupScreen />
+  {/if}
 {:else}
 <main>
   <header>
@@ -406,6 +508,56 @@
     </div>
 
     <div class="row actions playback">
+      <div class="group volume">
+        <p>Volumen</p>
+        <div class="row volume-row">
+          <button
+            type="button"
+            class="volume-button"
+            aria-label={volumePercent === 0 ? 'Activar sonido' : 'Silenciar'}
+            title={volumePercent === 0 ? 'Activar sonido' : 'Silenciar'}
+            onclick={toggleMute}
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
+              {#if volumePercent === 0}
+                <path
+                  d="M16 9l5 6M21 9l-5 6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              {:else}
+                <path
+                  d="M15.5 8.5a5 5 0 0 1 0 7"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M18 6a8.5 8.5 0 0 1 0 12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              {/if}
+            </svg>
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={volumePercent}
+            aria-label="Volumen general"
+            oninput={(e) => changeVolume(Number((e.currentTarget as HTMLInputElement).value))}
+          />
+          <span class="volume-value">{volumePercent}%</span>
+        </div>
+      </div>
       <div class="group tempo">
         <p>Tempo</p>
         <div class="row tempo-row">

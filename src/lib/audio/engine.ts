@@ -12,6 +12,14 @@ const DEFAULT_BPM = 120
 export const TEMPO_MIN = 40
 export const TEMPO_MAX = 200
 
+/** Volumen general 0..1 aplicado a la salida de Tone. */
+export function setMasterVolume(value: number) {
+  const gain = Math.min(1, Math.max(0, value))
+  const destination = Tone.getDestination()
+  destination.mute = gain === 0
+  destination.volume.value = gain === 0 ? -Infinity : 20 * Math.log10(gain)
+}
+
 function clampBpm(bpm: number) {
   return Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, bpm))
 }

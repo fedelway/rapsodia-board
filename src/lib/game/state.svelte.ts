@@ -2,6 +2,7 @@ import {
   harmonyDurationBeats,
   legalHarmonyOptions,
   roleAt,
+  ROLE_LABELS,
   type HarmonyDurationKey,
   type HarmonyRole,
   type LegalOption,
@@ -29,6 +30,7 @@ import {
 } from '../music/meter'
 import {
   MELODY_SUBDIVISIONS,
+  figureLabel,
   subdivisionBeats,
   subdivisionById,
   subdivisionHasTuplet,
@@ -36,6 +38,7 @@ import {
   type MelodySubdivision,
   type TupletSpec,
 } from '../music/subdivisions'
+import type { GameSnapshot, MoveAction, MoveEntry, SavedGame } from './persistence'
 
 export type TurnPhase = 'harmony' | 'melody'
 
@@ -102,6 +105,10 @@ class GameState {
   melodyByTurn = $state<number[]>([])
   /** Recordatorio para mover al director al cerrar la ronda. */
   roundNotice = $state(false)
+  /** Fecha ISO de creación de la partida; identifica el guardado. */
+  createdAt = $state('')
+  /** Registro legible de movimientos para depurar o compartir. */
+  moves = $state<MoveEntry[]>([])
   private subdivisionSerial = 0
 
   currentPlayerId = $derived<PlayerId>(
@@ -195,6 +202,12 @@ class GameState {
     const opening = openingById(openingId)
     this.openingId = openingFitsMeter(meterById(meterId), opening) ? openingId : 'tetic'
     this.started = true
+    this.createdAt = new Date().toISOString()
+    this.moves = []
+    this.recordMove(
+      'start-game',
+      `Empieza ${PLAYERS[startingPlayer]!.name} · compás ${this.meterId} · ${this.opening.label}`,
+    )
   }
 
   isPitchLegal(letter: Letter, accidental: Accidental): boolean {
@@ -246,26 +259,38 @@ class GameState {
     this.subdivisionGroupId = `subdivision-${this.subdivisionSerial}`
     this.subdivisionSerial += 1
     this.pick = null
+    this.recordMove(
+      'subdivision-start',
+      `${subdivision.label} (${subdivision.parts.length} notas)`,
+    )
     return true
   }
 
   cancelSubdivision() {
     if (!this.activeSubdivision) return
+    const label = this.activeSubdivision.label
     this.activeSubdivision = null
     this.subdivisionNotes = []
     this.subdivisionGroupId = null
     this.pick = null
+    this.recordMove('subdivision-cancel', `Cancela ${label}`)
   }
 
   confirmSubdivision() {
     if (!this.canConfirmSubdivision() || !this.activeSubdivision) return
-    const parts = this.activeSubdivision.parts
-    if (this.subdivisionNotes.length !== parts.length) return
-    this.melody = [...this.melody, ...this.subdivisionNotes]
+    const subdivision = this.activeSubdivision
+    const notes = this.subdivisionNotes
+    const parts = subdivision.parts
+    if (notes.length !== parts.length) return
+    this.melody = [...this.melody, ...notes]
     this.activeSubdivision = null
     this.subdivisionNotes = []
     this.subdivisionGroupId = null
     this.pick = null
+    this.recordMove(
+      'subdivision-confirm',
+      `${subdivision.label}: ${notes.map((note) => note.label).join(' – ')}`,
+    )
   }
 
   confirmHarmony() {
@@ -273,7 +298,8 @@ class GameState {
     if (this.role === 'seventh') {
       const triad = [...this.currentVoicing]
       const notes = [...triad]
-      if (!this.leaveChord && this.selectedHarmonyOption) {
+      const leftChord = this.leaveChord
+      if (!leftChord && this.selectedHarmonyOption) {
         const opt = this.selectedHarmonyOption
         notes.push({
           pc: opt.pc,
@@ -294,16 +320,24 @@ class GameState {
       ]
       this.currentVoicing = []
       this.lastHarmonyKind = 'close'
+      this.recordMove(
+        'harmony-close',
+        `${leftChord ? 'Acorde cerrado sin 7ma' : 'Acorde cerrado'}: ${notes
+          .map((note) => note.label)
+          .join(' – ')} · ${ROLE_LABELS[this.role]}`,
+      )
     } else if (this.selectedHarmonyOption && this.pick) {
+      const label = labelFromSelection(this.pick.letter, this.pick.accidental)
       this.currentVoicing = [
         ...this.currentVoicing,
         {
           pc: this.selectedHarmonyOption.pc,
           midi: this.selectedHarmonyOption.midi,
-          label: labelFromSelection(this.pick.letter, this.pick.accidental),
+          label,
         },
       ]
       this.lastHarmonyKind = 'add'
+      this.recordMove('harmony-add', `${ROLE_LABELS[this.role]}: ${label}`)
     }
     this.pick = null
     this.leaveChord = false
@@ -321,6 +355,11 @@ class GameState {
     }
     this.melody = [...this.melody, note]
     this.pick = null
+    this.recordMove('melody-note', `${note.label} · ${figureLabel(note.figure, note.tuplet)}`, {
+      note: note.label,
+      figure: figureLabel(note.figure, note.tuplet),
+      beats: note.durationBeats,
+    })
   }
 
   chooseLeaveChord() {
@@ -333,9 +372,11 @@ class GameState {
     if (this.phase !== 'melody' || this.activeSubdivision) return
     this.pick = null
     this.phase = 'harmony'
+    this.recordMove('pass-to-harmony', 'Pasa a la armonía')
   }
 
   endTurn() {
+    const finishing = this.currentPlayer.name
     const added = this.melody.length - this.melodyStartLength
     this.melodyByTurn = [...this.melodyByTurn, added]
     this.melodyStartLength = this.melody.length
@@ -347,8 +388,18 @@ class GameState {
       this.chordStartPlayer = ((this.chordStartPlayer + 1) % 4) as PlayerId
       this.roleIndex = 0
       this.roundNotice = true
+      this.recordMove(
+        'turn-end',
+        `Fin de ronda · abre ${PLAYERS[this.chordStartPlayer]!.name}`,
+        { player: finishing },
+      )
     } else {
       this.roleIndex += 1
+      this.recordMove(
+        'turn-end',
+        `Siguiente: ${this.currentPlayer.name} · ${ROLE_LABELS[this.role]}`,
+        { player: finishing },
+      )
     }
     this.harmonyDuration = 'bar'
     this.phase = 'melody'
@@ -394,7 +445,12 @@ class GameState {
     }
     if (this.activeSubdivision) {
       if (this.subdivisionNotes.length > 0) {
+        const removed = this.subdivisionNotes[this.subdivisionNotes.length - 1]
         this.subdivisionNotes = this.subdivisionNotes.slice(0, -1)
+        this.recordMove(
+          'undo-melody',
+          `Quita ${removed?.label ?? 'la última nota'} de la subdivisión`,
+        )
       } else {
         this.cancelSubdivision()
       }
@@ -407,9 +463,12 @@ class GameState {
       while (cut > this.melodyStartLength && this.melody[cut - 1]?.groupId === last.groupId) {
         cut -= 1
       }
+      const removed = this.melody.length - Math.max(cut, this.melodyStartLength)
       this.melody = this.melody.slice(0, Math.max(cut, this.melodyStartLength))
+      this.recordMove('undo-melody', `Deshace el grupo de subdivisión (${removed} notas)`)
     } else {
       this.melody = this.melody.slice(0, -1)
+      this.recordMove('undo-melody', `Deshace ${last?.label ?? 'la última nota'}`)
     }
     this.pick = null
   }
@@ -426,6 +485,7 @@ class GameState {
       this.pick = null
       this.leaveChord = false
       this.phase = 'melody'
+      this.recordMove('undo-harmony', 'Vuelve a la melodía')
       return
     }
 
@@ -440,9 +500,14 @@ class GameState {
     this.lastHarmonyKind = null
 
     if (this.roleIndex > 0) {
+      const removed = this.currentVoicing[this.currentVoicing.length - 1]
       this.currentVoicing = this.currentVoicing.slice(0, -1)
       this.roleIndex -= 1
       this.phase = 'harmony'
+      this.recordMove(
+        'undo-harmony',
+        `Quita ${removed?.label ?? 'la última nota'} del acorde`,
+      )
       return
     }
 
@@ -455,6 +520,83 @@ class GameState {
     this.harmonyDuration = chord.durationKey
     this.phase = 'harmony'
     this.roundNotice = false
+    this.recordMove(
+      'undo-harmony',
+      `Reabre el acorde: ${chord.notes.map((note) => note.label).join(' – ')}`,
+    )
+  }
+
+  snapshot(): GameSnapshot {
+    return {
+      started: this.started,
+      chordStartPlayer: this.chordStartPlayer,
+      roleIndex: this.roleIndex,
+      phase: this.phase,
+      currentVoicing: [...this.currentVoicing],
+      closedChords: [...this.closedChords],
+      melody: [...this.melody],
+      melodyByTurn: [...this.melodyByTurn],
+      melodyStartLength: this.melodyStartLength,
+      harmonyDuration: this.harmonyDuration,
+      melodyDuration: this.melodyDuration,
+      melodyOctave: this.melodyOctave,
+      harmonyVoice: this.harmonyVoice,
+      melodyVoice: this.melodyVoice,
+      tempoBpm: this.tempoBpm,
+      meterId: this.meterId,
+      openingId: this.openingId,
+      lastHarmonyKind: this.lastHarmonyKind,
+      roundNotice: this.roundNotice,
+      subdivisionSerial: this.subdivisionSerial,
+      activeSubdivisionId: this.activeSubdivision?.id ?? null,
+      subdivisionNotes: [...this.subdivisionNotes],
+      subdivisionGroupId: this.subdivisionGroupId,
+    }
+  }
+
+  restore(saved: SavedGame) {
+    const snapshot = saved.state
+    this.chordStartPlayer = snapshot.chordStartPlayer
+    this.roleIndex = snapshot.roleIndex
+    this.phase = snapshot.phase
+    this.currentVoicing = snapshot.currentVoicing
+    this.closedChords = snapshot.closedChords
+    this.melody = snapshot.melody
+    this.melodyByTurn = snapshot.melodyByTurn
+    this.melodyStartLength = Math.min(snapshot.melodyStartLength, snapshot.melody.length)
+    this.harmonyDuration = snapshot.harmonyDuration
+    this.melodyDuration = snapshot.melodyDuration
+    this.melodyOctave = snapshot.melodyOctave
+    this.harmonyVoice = snapshot.harmonyVoice
+    this.melodyVoice = snapshot.melodyVoice
+    this.tempoBpm = snapshot.tempoBpm
+    this.meterId = snapshot.meterId
+    this.openingId = snapshot.openingId
+    this.lastHarmonyKind = snapshot.lastHarmonyKind
+    this.roundNotice = snapshot.roundNotice
+    this.subdivisionSerial = snapshot.subdivisionSerial
+    this.activeSubdivision = snapshot.activeSubdivisionId
+      ? subdivisionById(snapshot.activeSubdivisionId) ?? null
+      : null
+    this.subdivisionNotes = this.activeSubdivision ? snapshot.subdivisionNotes : []
+    this.subdivisionGroupId = this.activeSubdivision ? snapshot.subdivisionGroupId : null
+    this.pick = null
+    this.leaveChord = false
+    this.createdAt = saved.createdAt
+    this.moves = saved.moves
+    this.started = true
+  }
+
+  private recordMove(action: MoveAction, detail: string, extra: Partial<MoveEntry> = {}) {
+    const entry: MoveEntry = {
+      at: new Date().toISOString(),
+      round: this.roundNumber,
+      player: this.currentPlayer.name,
+      action,
+      detail,
+      ...extra,
+    }
+    this.moves = [...this.moves, entry]
   }
 
   inProgressChordForPreview(): ClosedChord | null {

@@ -334,17 +334,52 @@ button.primary.ghost {
 
 .tempo-row {
   flex: 1;
+  flex-wrap: nowrap;
 }
 
 .tempo-row input[type='range'] {
   flex: 1;
-  min-width: 140px;
+  min-width: 120px;
   accent-color: #efe7d8;
 }
 
 .tempo-value {
   font-variant-numeric: tabular-nums;
-  min-width: 5.8em;
+  min-width: 4.6em;
+  color: var(--text-h);
+}
+
+.volume {
+  flex: 0 1 190px;
+  min-width: 170px;
+}
+
+.volume p {
+  margin-bottom: 6px;
+}
+
+.volume-row {
+  flex-wrap: nowrap;
+}
+
+.volume-row input[type='range'] {
+  flex: 1 1 80px;
+  min-width: 60px;
+  accent-color: #efe7d8;
+}
+
+.volume-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 9px;
+  color: var(--text-h);
+}
+
+.volume-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2em;
+  text-align: right;
   color: var(--text-h);
 }
 

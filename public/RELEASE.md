@@ -21,6 +21,8 @@ Los samples de instrumentos se cargan desde jsDelivr (`tonejs-instruments`, CC B
 - Subdivisiones de melodía: dos semicorcheas, tresillos de corcheas/negras, dosillo de corcheas y combinaciones de semicorcheas con corcheas
 - Las subdivisiones se cargan completas antes de avanzar y se pueden deshacer como grupo
 - Reproducción sin superposición: al volver a tocar "Escuchar composición" se corta lo anterior, y "Detener" cancela también las notas programadas
+- Control de volumen general con icono para silenciar y slider; el nivel se recuerda entre sesiones
+- Guardado automático en el navegador: al abrir la app se puede retomar la partida anterior con su fecha de creación, su estado y el registro de movimientos
 - Aviso al cerrar cada ronda para mover al director
 - Partitura 4/4 con barras de compás, cifrado americano (tríada al 3er jugador; al cerrar, notas entre paréntesis)
 - Samples de piano, cuerdas, vientos, etc.
